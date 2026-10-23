@@ -65,6 +65,27 @@ docker compose ps                    # все healthy?
 curl -sS https://ВАШ_ДОМЕН/api/v1/healthz
 ```
 
+## 4б. Два места, где GitHub скажет «нельзя»
+
+**Сборка падает с `denied: permission_denied: read_package`.** Встроенному токену
+Actions не разрешено публиковать пакеты организации. Чинится в настройках
+организации: Settings → Actions → General → **Workflow permissions** → *Read and
+write permissions* → Save. Если в репозитории эта настройка переопределена, то же
+самое повторить в нём.
+
+Первый опубликованный образ будет приватным. Чтобы сервер тянул его без входа,
+откройте пакет (вкладка Packages в организации) → Package settings → **Change
+visibility → Public**. Иначе на ВМ понадобится `docker login ghcr.io` с токеном.
+
+**Пуш в `main` отбивается правилом.** Если на ветке стоит ruleset с «Require a pull
+request», прямой пуш запрещён всем, включая вас. Работать так:
+
+```bash
+git checkout -b короткое-имя
+git push -u origin короткое-имя
+# дальше ссылка из вывода push → Create pull request → слияние после зелёного CI
+```
+
 ## 5. Секреты в GitHub
 
 В настройках каждого репозитория (`Settings → Secrets → Actions`), окружение
