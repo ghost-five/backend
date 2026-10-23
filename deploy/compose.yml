@@ -30,7 +30,9 @@ services:
       DATABASE_URL: postgres://${PGUSER}:${PGPASSWORD}@db:5432/${PGDATABASE}?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?секрет для подписи токенов}
       PUBLIC_ORIGIN: https://${DOMAIN}
-      SMTP_URL: ${SMTP_URL:?адрес SMTP для писем}
+      # Без почты сервер поднимется, но откажется слать письма — и скажет об этом
+      # в журнале. Требовать её здесь нельзя: тогда не запустить и базу.
+      SMTP_URL: ${SMTP_URL}
       SMTP_FROM: ${SMTP_FROM}
     depends_on:
       db: { condition: service_healthy }
