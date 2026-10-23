@@ -9,6 +9,8 @@ services:
     ports: ["80:80", "443:443"]
     environment:
       DOMAIN: ${DOMAIN:?нужен домен, например ghost-five.ru}
+      # Прочие имена домена: каждое перенаправляется на основной адрес.
+      ALIASES: ${ALIASES}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data      # сертификаты Let's Encrypt — их нельзя терять
