@@ -17,16 +17,53 @@
 
 ## Поднять у себя
 
-```
-docker compose -f deploy/compose.dev.yml up -d db
-docker compose -f deploy/compose.dev.yml run --rm migrate
-docker compose -f deploy/compose.dev.yml up -d --build api
+Нужны только Docker с плагином compose и Node 22+ (второй — если хотите запускать
+сервер без контейнера). Ни баз, ни пакетов ставить не надо.
+
+```bash
+git clone https://github.com/ghost-five/backend.git && cd backend
+
+docker compose -f deploy/compose.dev.yml up -d db          # Postgres на localhost:5432
+docker compose -f deploy/compose.dev.yml run --rm migrate  # создать таблицы
+docker compose -f deploy/compose.dev.yml up -d --build api # сервер на localhost:8080
+
 curl localhost:8080/api/v1/healthz
+# {"status":"ok","version":"dev","uptime":3}
 ```
 
-Проверено целиком: база поднимается, миграции применяются, сервер отвечает,
-healthcheck в контейнере становится `healthy`. Убрать за собой —
-`docker compose -f deploy/compose.dev.yml down -v`.
+Убрать за собой вместе с данными: `docker compose -f deploy/compose.dev.yml down -v`.
+
+### Разрабатывать удобнее без контейнера
+
+Контейнер пересобирается на каждую правку, поэтому держите в нём только базу,
+а сервер запускайте напрямую — он перечитывает файлы сам:
+
+```bash
+docker compose -f deploy/compose.dev.yml up -d db
+export DATABASE_URL='postgres://ghost:ghost@localhost:5432/ghost_five?sslmode=disable'
+export JWT_SECRET=dev-секрет-не-для-боя
+npm run dev        # node --watch src/server.js
+```
+
+### Полезное
+
+```bash
+# заглянуть в базу
+docker compose -f deploy/compose.dev.yml exec db psql -U ghost -d ghost_five
+
+# миграции: применить, откатить последнюю
+npx dbmate -d ./migrations --no-dump-schema up
+npx dbmate -d ./migrations --no-dump-schema rollback
+
+# журнал сервера в контейнере
+docker compose -f deploy/compose.dev.yml logs -f api
+```
+
+Переменные окружения сервер читает в [src/config.js](src/config.js); обязательна
+только `DATABASE_URL`. Без `SMTP_URL` он поднимется, но письма слать откажется.
+
+Проверено на чистом клоне: база поднимается, миграции применяются, сервер отвечает
+и в контейнере, и напрямую через `node`.
 
 ## Где правила партии
 
