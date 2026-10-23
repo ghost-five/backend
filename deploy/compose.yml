@@ -68,7 +68,9 @@ services:
     environment:
       DATABASE_URL: postgres://${PGUSER}:${PGPASSWORD}@db:5432/${PGDATABASE}?sslmode=disable
     volumes:
-      - ../migrations:/db/migrations:ro
+      # На сервере миграции лежат рядом с этим файлом, в /opt/ghost-five/migrations.
+      # (В compose.dev.yml путь другой: там запуск идёт из репозитория.)
+      - ./migrations:/db/migrations:ro
     depends_on:
       db: { condition: service_healthy }
     command: ["--no-dump-schema", "up"]
