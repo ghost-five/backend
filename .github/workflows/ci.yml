@@ -24,9 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: '22', cache: npm }
+        with: { node-version: '22' }
 
-      - run: npm ci
+      # Зависимостей пока нет, поэтому и файла блокировки нет: npm ci без него
+      # падает. Когда появится package-lock.json, сюда вернётся кеш и только npm ci.
+      - name: зависимости
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
 
       # Золотые тесты правил появятся здесь вместе с движком на Go:
       # сейчас единственная реализация живёт в репозитории frontend.
