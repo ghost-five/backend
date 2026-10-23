@@ -1,0 +1,41 @@
+# Проверки на каждый коммит и каждый pull request.
+name: ci
+
+on:
+  push: { branches: [main] }
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ghost
+          POSTGRES_PASSWORD: ghost
+          POSTGRES_DB: ghost_five_test
+        options: >-
+          --health-cmd "pg_isready -U ghost" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+        ports: ["5432:5432"]
+    env:
+      DATABASE_URL: postgres://ghost:ghost@localhost:5432/ghost_five_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: npm }
+
+      - run: npm ci
+
+      # Золотые тесты правил появятся здесь вместе с движком на Go:
+      # сейчас единственная реализация живёт в репозитории frontend.
+
+      - name: миграции применяются и откатываются
+        run: |
+          npx --yes dbmate@2 --no-dump-schema up
+          npx --yes dbmate@2 --no-dump-schema rollback
+          npx --yes dbmate@2 --no-dump-schema up
+
+      - run: npm run lint --if-present
+      - run: npm test --if-present

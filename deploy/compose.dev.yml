@@ -1,0 +1,50 @@
+# Локальная разработка: база, миграции и сервер, собранный из исходников.
+# Боевой compose.yml не трогаем — он про образы, TLS и домен.
+#
+#   docker compose -f deploy/compose.dev.yml up -d db
+#   docker compose -f deploy/compose.dev.yml run --rm migrate
+#   docker compose -f deploy/compose.dev.yml up --build api
+#   curl localhost:8080/api/v1/healthz
+name: ghost-five-dev
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ghost
+      POSTGRES_PASSWORD: ghost
+      POSTGRES_DB: ghost_five
+    ports: ["5432:5432"]     # чтобы ходить psql'ем с хоста
+    volumes: [dev_db:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghost -d ghost_five"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2
+    environment:
+      DATABASE_URL: postgres://ghost:ghost@db:5432/ghost_five?sslmode=disable
+    volumes: ["../migrations:/db/migrations:ro"]
+    depends_on:
+      db: { condition: service_healthy }
+    # --no-dump-schema: schema.sql нам не нужен, миграции и есть источник правды.
+    command: ["--no-dump-schema", "up"]
+
+  api:
+    build:
+      context: ..
+      args: { GIT_SHA: dev }
+    environment:
+      NODE_ENV: development
+      PORT: "8080"
+      DATABASE_URL: postgres://ghost:ghost@db:5432/ghost_five?sslmode=disable
+      PUBLIC_ORIGIN: http://localhost:8080
+      JWT_SECRET: dev-секрет-не-для-боя
+    ports: ["8080:8080"]
+    depends_on:
+      db: { condition: service_healthy }
+
+volumes:
+  dev_db:

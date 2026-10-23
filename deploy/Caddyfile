@@ -1,0 +1,33 @@
+# Сертификат Caddy получает и продлевает сам: заранее ничего делать не нужно,
+# только направить A-запись домена на эту машину.
+{$DOMAIN} {
+	encode zstd gzip
+
+	# API и партия по WebSocket: апгрейд соединения Caddy проводит сам.
+	handle /api/* {
+		reverse_proxy api:8080
+	}
+
+	# Всё остальное — собранный фронт.
+	handle {
+		reverse_proxy web:80
+	}
+
+	log {
+		output stdout
+		format console
+	}
+
+	header {
+		# Статику версионирует сборщик, поэтому храним долго, а index.html — нет.
+		?Cache-Control "public, max-age=300"
+		-Server
+		X-Content-Type-Options nosniff
+		Referrer-Policy same-origin
+	}
+}
+
+# Без www: пусть адрес будет один.
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
+}

@@ -1,0 +1,77 @@
+# Боевая сборка Ghost Five: TLS и маршруты, статика, сервер, база.
+# Запуск на ВМ:  docker compose -f compose.yml --env-file .env up -d
+name: ghost-five
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN:?нужен домен, например ghost-five.ru}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data      # сертификаты Let's Encrypt — их нельзя терять
+      - caddy_config:/config
+    depends_on: [web, api]
+
+  web:
+    image: ${WEB_IMAGE:?образ фронта, например ghcr.io/ghost-five/frontend:sha}
+    restart: unless-stopped
+    expose: ["80"]
+
+  api:
+    image: ${API_IMAGE:?образ бэка, например ghcr.io/ghost-five/backend:sha}
+    restart: unless-stopped
+    expose: ["8080"]
+    environment:
+      NODE_ENV: production
+      PORT: "8080"
+      DATABASE_URL: postgres://${PGUSER}:${PGPASSWORD}@db:5432/${PGDATABASE}?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?секрет для подписи токенов}
+      PUBLIC_ORIGIN: https://${DOMAIN}
+      SMTP_URL: ${SMTP_URL:?адрес SMTP для писем}
+      SMTP_FROM: ${SMTP_FROM}
+    depends_on:
+      db: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PGUSER:?пользователь базы}
+      POSTGRES_PASSWORD: ${PGPASSWORD:?пароль базы}
+      POSTGRES_DB: ${PGDATABASE:?имя базы}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    # Наружу порт не открываем: к базе ходит только сервер внутри сети compose.
+
+  # Разовая служба: применяет миграции. Запускается руками при деплое.
+  # docker compose run --rm migrate
+  migrate:
+    image: ghcr.io/amacneil/dbmate:2
+    profiles: ["tools"]
+    environment:
+      DATABASE_URL: postgres://${PGUSER}:${PGPASSWORD}@db:5432/${PGDATABASE}?sslmode=disable
+    volumes:
+      - ../migrations:/db/migrations:ro
+    depends_on:
+      db: { condition: service_healthy }
+    command: ["--no-dump-schema", "up"]
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:

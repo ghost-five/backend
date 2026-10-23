@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ghost-five.ru/api/v1/game-state.schema.json",
+  "title": "Состояние партии",
+  "description": "Полное состояние одного раунда. Его считает сервер, применяя правила к ходам игроков; клиент только рисует. По этой схеме генерируются типы TypeScript и структуры Go.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "n", "cells", "q", "anchors", "anchorSet", "anchorLeft", "shots", "caps",
+    "walls", "scar", "misses", "bank", "clean", "frames", "magnetCd",
+    "round", "moves", "turn", "starter", "gameNo",
+    "over", "winner", "winLine", "winReason", "last", "log", "fx"
+  ],
+  "properties": {
+    "n": { "type": "integer", "minimum": 5, "description": "Сторона поля" },
+    "cells": {
+      "type": "array",
+      "description": "Поле построчно снизу вверх: 0 пусто, 1 и 2 — фишки игроков, 3 стена",
+      "items": { "type": "integer", "enum": [0, 1, 2, 3] }
+    },
+    "q": {
+      "$ref": "#/$defs/perPlayerCells",
+      "description": "Очередь короткой памяти: первая в списке исчезнет следующей. Фишки под щитом якоря в очереди не стоят."
+    },
+    "anchors": { "type": "array", "items": { "type": "integer" }, "description": "Клетки якорей обоих игроков" },
+    "anchorSet": {
+      "type": "object",
+      "description": "Когда якорь поставлен: клетка → номер хода. По нему считается возраст якоря.",
+      "additionalProperties": { "type": "integer" }
+    },
+    "anchorLeft": { "$ref": "#/$defs/perPlayerInt", "description": "Якорей в запасе" },
+    "shots": { "$ref": "#/$defs/perPlayerInt", "description": "Выстрелов осталось" },
+    "caps": { "$ref": "#/$defs/perPlayerInt", "description": "Захвачено пар; пять — победа" },
+    "walls": {
+      "type": "array",
+      "description": "Стены: [клетка, срок]. Срок 0 — стена стоит вечно.",
+      "items": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer" } }
+    },
+    "scar": {
+      "type": "array",
+      "description": "След от сбитой фишки на один ход: [клетка, чья была]",
+      "items": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer" } }
+    },
+    "misses": { "$ref": "#/$defs/perPlayerInt", "description": "Пропусков подряд; три — поражение" },
+    "bank": { "$ref": "#/$defs/perPlayerInt", "description": "Запас времени, секунд" },
+    "clean": { "$ref": "#/$defs/perPlayerInt", "description": "Ходов подряд без траты запаса; три — запас возвращается" },
+    "magnetCd": { "$ref": "#/$defs/perPlayerInt", "description": "Ходов до того, как магнит снова заработает" },
+    "frames": {
+      "type": "array",
+      "description": "Снимки поля для перемотки, от старых к новым",
+      "items": {
+        "type": "object",
+        "required": ["t", "c"],
+        "additionalProperties": false,
+        "properties": {
+          "t": { "type": "string", "description": "Метка хода, например «Х7»" },
+          "c": { "type": "string", "description": "cells строкой, по символу на клетку" },
+          "l": { "type": "array", "items": { "type": "integer" }, "description": "Последние поставленные" },
+          "s": { "type": "array", "items": { "type": "integer" }, "description": "Клетки со следом от сбитой фишки" }
+        }
+      }
+    },
+    "round": { "type": "integer", "minimum": 1, "description": "Номер хода при тайном ходе (оба ходят одновременно)" },
+    "moves": { "type": "integer", "minimum": 0, "description": "Номер полухода, когда ходят по очереди" },
+    "turn": { "type": "integer", "enum": [1, 2], "description": "Чей ход, когда ходят по очереди" },
+    "starter": { "type": "integer", "enum": [1, 2], "description": "Кто начинал раунд" },
+    "gameNo": { "type": "integer", "minimum": 1, "description": "Номер раунда внутри партии" },
+    "over": { "type": "boolean" },
+    "winner": { "type": "integer", "enum": [0, 1, 2], "description": "0 — ничья или партия идёт" },
+    "winLine": { "type": "array", "items": { "type": "integer" }, "description": "Клетки выигрышного ряда" },
+    "winReason": { "type": "string", "enum": ["", "five", "caps", "misses", "resign", "full", "both"] },
+    "last": { "type": "array", "items": { "type": "integer" }, "description": "Клетки последнего хода" },
+    "log": {
+      "type": "array",
+      "description": "Журнал, новые записи сверху. Событие — часть правил; человеческий текст собирает клиент.",
+      "items": {
+        "type": "object",
+        "required": ["tag", "ev"],
+        "properties": {
+          "tag": { "type": "string" },
+          "kind": { "type": "string", "enum": ["", "burn", "win"] },
+          "ev": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+        }
+      }
+    },
+    "fx": {
+      "type": "object",
+      "description": "Подсказки для анимации одного кадра: ни на что в правилах не влияют",
+      "properties": {
+        "fresh": { "type": "array", "items": { "type": "integer" } },
+        "gone": { "type": "array", "items": { "type": "array", "items": { "type": "integer" } } },
+        "burn": { "type": "integer" },
+        "slide": { "type": "array", "items": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "type": "integer" } } }
+      }
+    }
+  },
+  "$defs": {
+    "perPlayerInt": {
+      "type": "object",
+      "required": ["1", "2"],
+      "additionalProperties": false,
+      "properties": { "1": { "type": "integer" }, "2": { "type": "integer" } }
+    },
+    "perPlayerCells": {
+      "type": "object",
+      "required": ["1", "2"],
+      "additionalProperties": false,
+      "properties": {
+        "1": { "type": "array", "items": { "type": "integer" } },
+        "2": { "type": "array", "items": { "type": "integer" } }
+      }
+    },
+    "event": {
+      "type": "object",
+      "description": "Событие хода. k — что случилось, p — чьё, i — клетка.",
+      "required": ["k"],
+      "properties": {
+        "k": {
+          "type": "string",
+          "enum": [
+            "start", "open", "place", "anchor", "anchorSet", "anchorMove", "unanchor",
+            "magnet", "magnetClash", "hit", "miss", "anchorMiss", "burn", "cap",
+            "vanish", "wallGone", "cool", "bankBack", "pass", "result"
+          ]
+        },
+        "p": { "type": "integer", "enum": [1, 2] },
+        "i": { "type": "integer" },
+        "from": { "type": "integer" },
+        "n": { "type": "integer" },
+        "w": { "type": "integer" },
+        "cd": { "type": "integer" },
+        "total": { "type": "integer" },
+        "wall": { "type": "boolean" },
+        "anchor": { "type": "boolean" },
+        "guessed": { "type": "boolean" },
+        "secret": { "type": "boolean" },
+        "starter": { "type": "integer" },
+        "reason": { "type": "string" }
+      }
+    }
+  }
+}

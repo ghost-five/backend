@@ -1,0 +1,713 @@
+openapi: 3.1.0
+info:
+  title: Ghost Five API
+  version: 1.0.0
+  description: |
+    HTTP-часть сервера Ghost Five: аккаунты, друзья, лобби, история и рейтинг.
+    Сама партия идёт по WebSocket — см. docs/api/ws.md.
+
+    Правила:
+    - все тела и ответы — JSON в UTF-8;
+    - ошибки отвечают объектом `Error` с машинным `code`;
+    - доступ по короткому access-токену в заголовке `Authorization: Bearer`,
+      обновление — по refresh-куке `gf_refresh` (httpOnly, SameSite=Lax, Secure);
+    - время — строки ISO 8601 в UTC;
+    - идентификаторы игроков — UUID, код партии — 4–8 символов [A-Z0-9].
+servers:
+  - url: https://ghost-five.ru/api/v1
+    description: боевой
+  - url: https://stage.ghost-five.ru/api/v1
+    description: предпросмотр
+security:
+  - bearer: []
+
+tags:
+  - name: auth
+    description: Регистрация, вход, пароль
+  - name: me
+    description: Свой профиль
+  - name: friends
+    description: Друзья и заявки
+  - name: games
+    description: Лобби и партии
+  - name: history
+    description: Сыгранные раунды
+  - name: leaderboard
+    description: Рейтинг
+
+paths:
+  /auth/signup:
+    post:
+      tags: [auth]
+      summary: Завести аккаунт и выслать код подтверждения
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, nickname, password]
+              properties:
+                email: { type: string, format: email }
+                nickname: { $ref: '#/components/schemas/Nickname' }
+                password: { type: string, minLength: 8, maxLength: 200 }
+      responses:
+        '202': { description: Код отправлен на почту }
+        '409':
+          description: Почта или ник заняты
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /auth/confirm:
+    post:
+      tags: [auth]
+      summary: Подтвердить почту кодом из письма
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        '422': { $ref: '#/components/responses/Invalid' }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /auth/resend:
+    post:
+      tags: [auth]
+      summary: Выслать код подтверждения ещё раз
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '202': { description: Если такой адрес есть и не подтверждён, письмо ушло }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Войти
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        '401':
+          description: Неверная пара почта/пароль либо почта не подтверждена
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Обновить access-токен по refresh-куке
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Session' }
+        '401': { description: Кука просрочена или отозвана }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Выйти и отозвать refresh-токен
+      responses:
+        '204': { description: Вышли }
+
+  /auth/password/forgot:
+    post:
+      tags: [auth]
+      summary: Выслать код для смены пароля
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: { type: string, format: email }
+      responses:
+        '202': { description: Если такой адрес есть, письмо ушло }
+        '429': { $ref: '#/components/responses/TooMany' }
+
+  /auth/password/reset:
+    post:
+      tags: [auth]
+      summary: Задать новый пароль по коду из письма
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, password]
+              properties:
+                email: { type: string, format: email }
+                code: { type: string, pattern: '^[0-9]{6}$' }
+                password: { type: string, minLength: 8 }
+      responses:
+        '200':
+          description: Пароль сменён, все прежние сессии отозваны
+          content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } }
+        '422': { $ref: '#/components/responses/Invalid' }
+
+  /auth/password/change:
+    post:
+      tags: [auth]
+      summary: Сменить пароль, зная старый
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [current, password]
+              properties:
+                current: { type: string }
+                password: { type: string, minLength: 8 }
+      responses:
+        '204': { description: Сменён, прочие сессии отозваны }
+        '401': { description: Старый пароль не подошёл }
+
+  /me:
+    get:
+      tags: [me]
+      summary: Свой профиль
+      responses:
+        '200':
+          description: Профиль
+          content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
+    patch:
+      tags: [me]
+      summary: Сменить ник
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                nickname: { $ref: '#/components/schemas/Nickname' }
+      responses:
+        '200':
+          description: Обновлённый профиль
+          content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } }
+        '409': { description: Ник занят }
+
+  /nicknames:
+    get:
+      tags: [friends]
+      summary: Подсказки по нику для поиска друзей
+      parameters:
+        - { name: q, in: query, required: true, schema: { type: string, minLength: 2, maxLength: 20 } }
+      responses:
+        '200':
+          description: До десяти похожих ников
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/Player' } }
+
+  /nicknames/{nickname}/available:
+    get:
+      tags: [auth]
+      summary: Свободен ли ник
+      security: []
+      parameters:
+        - { name: nickname, in: path, required: true, schema: { $ref: '#/components/schemas/Nickname' } }
+      responses:
+        '200':
+          description: Ответ
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [available]
+                properties: { available: { type: boolean } }
+
+  /friends:
+    get:
+      tags: [friends]
+      summary: Друзья и заявки
+      responses:
+        '200':
+          description: Три списка
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [friends, incoming, outgoing]
+                properties:
+                  friends: { type: array, items: { $ref: '#/components/schemas/Player' } }
+                  incoming: { type: array, items: { $ref: '#/components/schemas/Player' } }
+                  outgoing: { type: array, items: { $ref: '#/components/schemas/Player' } }
+    post:
+      tags: [friends]
+      summary: Позвать в друзья по нику
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nickname]
+              properties:
+                nickname: { $ref: '#/components/schemas/Nickname' }
+      responses:
+        '200':
+          description: Что получилось
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result]
+                properties:
+                  result: { type: string, enum: [sent, accepted, already, pending] }
+        '404': { description: Такого ника нет }
+
+  /friends/{playerId}:
+    delete:
+      tags: [friends]
+      summary: Удалить из друзей или отозвать заявку
+      parameters: [ { $ref: '#/components/parameters/PlayerId' } ]
+      responses:
+        '204': { description: Удалено }
+
+  /friends/{playerId}/respond:
+    post:
+      tags: [friends]
+      summary: Ответить на входящую заявку
+      parameters: [ { $ref: '#/components/parameters/PlayerId' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accept]
+              properties: { accept: { type: boolean } }
+      responses:
+        '204': { description: Ответ принят }
+
+  /games:
+    get:
+      tags: [games]
+      summary: Мои партии
+      responses:
+        '200':
+          description: Список
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [games, invites]
+                properties:
+                  games: { type: array, items: { $ref: '#/components/schemas/GameSummary' } }
+                  invites: { type: array, items: { $ref: '#/components/schemas/GameSummary' } }
+    post:
+      tags: [games]
+      summary: Создать партию
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [cfg]
+              properties:
+                cfg: { $ref: '#/components/schemas/Cfg' }
+                inviteeId:
+                  type: [string, 'null']
+                  format: uuid
+                  description: Друг, которого зовём. Без него партия открыта по ссылке.
+      responses:
+        '201':
+          description: Партия создана
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+        '403': { description: Пригласить можно только друга }
+
+  /games/{code}:
+    get:
+      tags: [games]
+      summary: Партия глазами игрока
+      description: |
+        Чужой несделанный ход сервер не отдаёт никогда: в состоянии он виден только
+        признаком `opponentReady`.
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      responses:
+        '200':
+          description: Партия
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+        '404': { description: Нет такой партии или она не ваша }
+    delete:
+      tags: [games]
+      summary: Удалить партию
+      description: Создатель — всегда; второй игрок — пока нет ходов или когда партия окончена.
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      responses:
+        '204': { description: Удалена }
+        '403': { description: Сейчас удалять нельзя }
+
+  /games/{code}/join:
+    post:
+      tags: [games]
+      summary: Сесть за стол вторым
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      responses:
+        '200':
+          description: Сели
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+        '409': { description: Место занято или приглашение было не вам }
+
+  /games/{code}/decline:
+    post:
+      tags: [games]
+      summary: Отказаться от приглашения
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      responses:
+        '204': { description: Отказ принят }
+
+  /games/{code}/moves:
+    post:
+      tags: [games]
+      summary: Сделать ход (запасной путь, когда WebSocket недоступен)
+      description: |
+        То же, что сообщение `move` в WebSocket. Повтор с тем же `gameNo` и `round`
+        не применяется дважды: сервер вернёт текущее состояние.
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MoveRequest' }
+      responses:
+        '200':
+          description: Состояние после хода (или ожидание соперника)
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+        '409':
+          description: Ход не к этому раунду или уже сделан
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '422': { $ref: '#/components/responses/Invalid' }
+
+  /games/{code}/moves/cancel:
+    post:
+      tags: [games]
+      summary: Отозвать свой ход, пока соперник не сходил
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      responses:
+        '200':
+          description: Ход отозван
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+        '409': { description: Соперник уже сходил, отзывать поздно }
+
+  /games/{code}/resign:
+    post:
+      tags: [games]
+      summary: Сдаться — соперник забирает всю партию
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      responses:
+        '200':
+          description: Партия окончена
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+
+  /games/{code}/rematch:
+    post:
+      tags: [games]
+      summary: Следующий раунд или новая партия
+      description: Если партия доиграна до двух побед, счёт обнуляется и начинается новая.
+      parameters: [ { $ref: '#/components/parameters/Code' } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cfg: { $ref: '#/components/schemas/Cfg' }
+      responses:
+        '200':
+          description: Новое состояние
+          content: { application/json: { schema: { $ref: '#/components/schemas/GameView' } } }
+
+  /history:
+    get:
+      tags: [history]
+      summary: Свои сыгранные раунды
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 50 } }
+        - { name: before, in: query, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Список, новые сверху
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/HistoryItem' } }
+
+  /history/{id}:
+    get:
+      tags: [history]
+      summary: Раунд целиком, с кадрами для перемотки
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Запись
+          content: { application/json: { schema: { $ref: '#/components/schemas/HistoryRecord' } } }
+        '404': { description: Нет такой записи }
+
+  /leaderboard:
+    get:
+      tags: [leaderboard]
+      summary: Таблица лидеров
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 100, default: 20 } }
+      responses:
+        '200':
+          description: Игроки по убыванию рейтинга
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: '#/components/schemas/LeaderRow' } }
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Code:
+      name: code
+      in: path
+      required: true
+      schema: { $ref: '#/components/schemas/GameCode' }
+    PlayerId:
+      name: playerId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Session:
+      description: Сессия заведена, refresh ушёл кукой
+      content: { application/json: { schema: { $ref: '#/components/schemas/Session' } } }
+    Invalid:
+      description: Тело не прошло проверку
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    TooMany:
+      description: Слишком часто
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: |
+                Машинный код. Набор закрыт: invalid_body, invalid_credentials,
+                email_taken, nickname_taken, not_confirmed, bad_code, rate_limited,
+                not_found, forbidden, seat_taken, stale_move, move_not_allowed,
+                game_over, internal.
+            message: { type: string, description: Человеческий текст на русском }
+            fields:
+              type: object
+              additionalProperties: { type: string }
+              description: Для invalid_body — что именно не так
+
+    Nickname:
+      type: string
+      pattern: '^[A-Za-zА-Яа-яЁё0-9_.-]{3,20}$'
+
+    GameCode:
+      type: string
+      pattern: '^[A-Z0-9]{4,8}$'
+
+    Session:
+      type: object
+      required: [accessToken, expiresIn, me]
+      properties:
+        accessToken: { type: string }
+        expiresIn: { type: integer, description: Секунд до конца жизни access-токена }
+        me: { $ref: '#/components/schemas/Me' }
+
+    Player:
+      type: object
+      required: [id, nickname, rating]
+      properties:
+        id: { type: string, format: uuid }
+        nickname: { $ref: '#/components/schemas/Nickname' }
+        rating: { type: integer }
+
+    Me:
+      allOf:
+        - $ref: '#/components/schemas/Player'
+        - type: object
+          required: [email, wins, losses]
+          properties:
+            email: { type: string, format: email }
+            wins: { type: integer }
+            losses: { type: integer }
+
+    LeaderRow:
+      allOf:
+        - $ref: '#/components/schemas/Player'
+        - type: object
+          required: [place, wins, losses]
+          properties:
+            place: { type: integer, minimum: 1 }
+            wins: { type: integer }
+            losses: { type: integer }
+
+    Cfg:
+      type: object
+      description: Правила партии. Их выбирает создатель, второй игрок принимает как есть.
+      required: [size, win, secret, wallTtl, mem, anchor, shots, capture, timer, bank]
+      properties:
+        size: { type: integer, enum: [11, 13, 15] }
+        win: { type: integer, enum: [4, 5] }
+        secret: { type: boolean, description: Тайный ход — оба ходят одновременно }
+        wallTtl: { type: integer, description: Через сколько ходов разрушается стена, 0 — никогда }
+        mem: { type: integer, description: Короткая память, 0 — выключена }
+        anchor: { type: boolean }
+        shots: { type: integer, minimum: 0, maximum: 3 }
+        capture: { type: boolean }
+        timer: { type: integer, description: Секунд на ход, 0 — без часов }
+        bank: { type: integer, description: Запас времени на партию, секунд }
+
+    Move:
+      type: object
+      description: Ход игрока. Поле `from` нужно только магниту при двух якорях.
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [place, anchor, shot, moveAnchor, magnet, pass] }
+        i: { type: integer, minimum: 0, description: Клетка — номер в массиве cells }
+        take:
+          type: [integer, 'null']
+          description: Клетка якоря, который заодно уходит в запас. Возврат не считается ходом.
+        from: { type: [integer, 'null'], description: Якорь, которым тянет магнит }
+        spent: { type: integer, default: 0, description: Секунд, взятых из запаса }
+
+    MoveRequest:
+      type: object
+      required: [gameNo, round, move]
+      properties:
+        gameNo: { type: integer, description: Номер раунда в партии — защита от опоздавшего хода }
+        round: { type: integer, description: Номер хода внутри раунда }
+        move: { $ref: '#/components/schemas/Move' }
+
+    GameSummary:
+      type: object
+      required: [code, status, cfg, score, updatedAt]
+      properties:
+        code: { $ref: '#/components/schemas/GameCode' }
+        status: { type: string, enum: [waiting, playing, over, declined] }
+        cfg: { $ref: '#/components/schemas/Cfg' }
+        players:
+          type: object
+          properties:
+            '1': { $ref: '#/components/schemas/Player' }
+            '2': { type: [object, 'null'], allOf: [ { $ref: '#/components/schemas/Player' } ] }
+        invitee: { type: [object, 'null'], allOf: [ { $ref: '#/components/schemas/Player' } ] }
+        score: { $ref: '#/components/schemas/Score' }
+        yourSeat: { type: [integer, 'null'], enum: [1, 2, null] }
+        updatedAt: { type: string, format: date-time }
+
+    Score:
+      type: object
+      description: Счёт партии. Партия идёт до двух выигранных раундов, ничейные не в счёт.
+      required: ['1', '2', 'd']
+      properties:
+        '1': { type: integer }
+        '2': { type: integer }
+        'd': { type: integer, description: Ничейных раундов — они переигрываются }
+
+    GameView:
+      allOf:
+        - $ref: '#/components/schemas/GameSummary'
+        - type: object
+          required: [state, opponentReady, youReady]
+          properties:
+            state:
+              $ref: './game-state.schema.json'
+            opponentReady: { type: boolean, description: Соперник сходил, но ход скрыт }
+            youReady: { type: boolean, description: Ваш ход принят и ждёт соперника }
+            deadline:
+              type: [string, 'null']
+              format: date-time
+              description: Когда истекает время на текущий ход. Часы считает сервер.
+
+    HistoryItem:
+      type: object
+      required: [id, playedAt, cfg, winner, score, names, mode]
+      properties:
+        id: { type: string, format: uuid }
+        playedAt: { type: string, format: date-time }
+        mode: { type: string, enum: [online, bot, friend] }
+        code: { type: [string, 'null'] }
+        gameNo: { type: integer }
+        cfg: { $ref: '#/components/schemas/Cfg' }
+        winner: { type: integer, enum: [0, 1, 2] }
+        reason: { type: string, enum: ['', five, caps, misses, resign, full, both] }
+        score: { $ref: '#/components/schemas/Score' }
+        names:
+          type: object
+          properties:
+            '1': { type: string }
+            '2': { type: string }
+
+    HistoryRecord:
+      allOf:
+        - $ref: '#/components/schemas/HistoryItem'
+        - type: object
+          required: [frames, log]
+          properties:
+            frames:
+              type: array
+              description: Снимки поля для перемотки, не больше 50
+              items:
+                type: object
+                required: [t, c]
+                properties:
+                  t: { type: string, description: Метка хода, например «Х7» }
+                  c: { type: string, description: Клетки строкой, по символу на клетку }
+                  l: { type: array, items: { type: integer } }
+                  s: { type: array, items: { type: array, items: { type: integer } } }
+            log:
+              type: array
+              description: События раунда, новые сверху
+              items:
+                type: object
+                required: [tag, ev]
+                properties:
+                  tag: { type: string }
+                  kind: { type: string }
+                  ev: { type: array, items: { type: object } }

@@ -1,0 +1,14 @@
+{
+  "name": "@ghost-five/backend",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Ghost Five: сервер партий, аккаунтов и рейтинга",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "migrate": "dbmate --no-dump-schema up",
+    "rollback": "dbmate rollback"
+  }
+}
