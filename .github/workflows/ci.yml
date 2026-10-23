@@ -35,11 +35,12 @@ jobs:
       # Золотые тесты правил появятся здесь вместе с движком на Go:
       # сейчас единственная реализация живёт в репозитории frontend.
 
+      # -d: миграции лежат в корне репозитория, а не в db/migrations, как по умолчанию.
       - name: миграции применяются и откатываются
         run: |
-          npx --yes dbmate@2 --no-dump-schema up
-          npx --yes dbmate@2 --no-dump-schema rollback
-          npx --yes dbmate@2 --no-dump-schema up
+          npx --yes dbmate@2 -d ./migrations --no-dump-schema up
+          npx --yes dbmate@2 -d ./migrations --no-dump-schema rollback
+          npx --yes dbmate@2 -d ./migrations --no-dump-schema up
 
       - run: npm run lint --if-present
       - run: npm test --if-present

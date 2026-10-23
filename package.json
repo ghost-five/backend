@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "migrate": "dbmate --no-dump-schema up",
-    "rollback": "dbmate rollback"
+    "migrate": "dbmate -d ./migrations --no-dump-schema up",
+    "rollback": "dbmate -d ./migrations --no-dump-schema rollback"
   }
 }
