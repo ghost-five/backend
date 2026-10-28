@@ -21,26 +21,34 @@ jobs:
         ports: ["5432:5432"]
     env:
       DATABASE_URL: postgres://ghost:ghost@localhost:5432/ghost_five_test?sslmode=disable
+      GF_FIXTURES: ${{ github.workspace }}/_frontend/fixtures/cases
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '22' }
+      - uses: actions/checkout@v5
 
-      # Зависимостей пока нет, поэтому и файла блокировки нет: npm ci без него
-      # падает. Когда появится package-lock.json, сюда вернётся кеш и только npm ci.
-      - name: зависимости
-        run: |
-          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      # Золотые тесты правил лежат во frontend, рядом с движком на JS. Репозиторий
+      # публичный, токен не нужен. Каталог с «_» go и линтер не видят.
+      - uses: actions/checkout@v5
+        with:
+          repository: ${{ github.repository_owner }}/frontend
+          path: _frontend
 
-      # Золотые тесты правил появятся здесь вместе с движком на Go:
-      # сейчас единственная реализация живёт в репозитории frontend.
+      # Версию Go меняем вместе с go.mod и Dockerfile.
+      - uses: actions/setup-go@v6
+        with: { go-version: '1.27' }
 
-      # -d: миграции лежат в корне репозитория, а не в db/migrations, как по умолчанию.
+      # Тот же образ dbmate, что применяет миграции на ВМ.
       - name: миграции применяются и откатываются
         run: |
-          npx --yes dbmate@2 -d ./migrations --no-dump-schema up
-          npx --yes dbmate@2 -d ./migrations --no-dump-schema rollback
-          npx --yes dbmate@2 -d ./migrations --no-dump-schema up
+          dbmate() {
+            docker run --rm --network host -e DATABASE_URL \
+              -v "$PWD/migrations:/db/migrations:ro" ghcr.io/amacneil/dbmate:2 --no-dump-schema "$@"
+          }
+          dbmate up
+          dbmate rollback
+          dbmate up
 
-      - run: npm run lint --if-present
-      - run: npm test --if-present
+      - uses: golangci/golangci-lint-action@v9
+        with: { version: v2.15 }
+
+      - name: тесты
+        run: go test -race ./...
