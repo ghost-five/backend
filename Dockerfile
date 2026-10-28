@@ -1,23 +1,24 @@
-# Образ сервера. Зависимостей пока нет, но шаг npm ci оставлен: он появится
-# вместе с первым пакетом и будет кешироваться отдельно от исходников.
-FROM node:22-alpine AS deps
-WORKDIR /app
-COPY package.json package-lock.json* ./
-# mkdir — на случай, когда зависимостей ещё нет: npm тогда каталог не создаёт.
-RUN (npm ci --omit=dev || npm install --omit=dev) && mkdir -p node_modules
+# syntax=docker/dockerfile:1
+# Образ сервера: статический бинарник в distroless — ни оболочки, ни пакетов,
+# только сервер. Поэтому healthcheck — команда самого сервера, а не wget.
 
-FROM node:22-alpine
-WORKDIR /app
-ENV NODE_ENV=production
+# Версию Go меняем вместе с go.mod и .github/workflows/ci.yml.
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+# Сначала зависимости: слой кешируется, пока не меняются go.mod и go.sum.
+COPY go.mod go.sum* ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
+
+FROM gcr.io/distroless/static-debian13:nonroot
+COPY --from=build /out/api /usr/local/bin/api
+ENV APP_ENV=production
 ARG GIT_SHA=dev
 ENV GIT_SHA=$GIT_SHA
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json ./
-COPY src ./src
-COPY migrations ./migrations
-# Своим пользователем: в контейнере нечего делать под root.
-USER node
+# nonroot (uid 65532) уже задан базовым образом: в контейнере нечего делать под root.
 EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=5 \
-  CMD wget -qO- http://127.0.0.1:8080/healthz || exit 1
-CMD ["node", "src/server.js"]
+  CMD ["/usr/local/bin/api", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/api"]
