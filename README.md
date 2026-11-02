@@ -11,13 +11,27 @@
 
 - `migrations/0001_init.sql` — схема базы. Проверена на Postgres 16: применяется,
   откатывается, ограничения и каскады работают.
-- `src/` — каркас сервера. Пока отвечает только «жив» (`/healthz`), но этого хватает,
-  чтобы собрать образ, выложить его и убедиться, что конвейер работает целиком.
+- `cmd/api`, `internal/` — каркас сервера на Go. Пока отвечает только «жив»
+  (`/healthz`), но этого хватает, чтобы собрать образ, выложить его и убедиться,
+  что конвейер работает целиком.
 - `Dockerfile`, `deploy/` — боевая сборка и выкладка, см. [deploy/README.md](deploy/README.md).
+
+## Код
+
+```
+cmd/api/          точка входа: api (сервер) и api healthcheck (для docker)
+internal/config/  настройки из переменных окружения
+internal/api/     HTTP: маршруты из docs/api/openapi.yaml
+internal/game/    правила партии — порт engine.js (пока только проверка фикстур)
+```
+
+Дальше по мере работы появятся `internal/store` (SQL), `internal/service`
+(сценарии: аккаунты, лобби, партия, рейтинг) и `internal/ws` (партия по WebSocket).
+Слои без магии: `api`/`ws` → `service` → `store`, запросы — обычный SQL.
 
 ## Поднять у себя
 
-Нужны только Docker с плагином compose и Node 22+ (второй — если хотите запускать
+Нужны Docker с плагином compose и Go 1.27+ (второй — если хотите запускать
 сервер без контейнера). Ни баз, ни пакетов ставить не надо.
 
 ```bash
@@ -36,14 +50,27 @@ curl localhost:8080/api/v1/healthz
 ### Разрабатывать удобнее без контейнера
 
 Контейнер пересобирается на каждую правку, поэтому держите в нём только базу,
-а сервер запускайте напрямую — он перечитывает файлы сам:
+а сервер запускайте напрямую:
 
 ```bash
 docker compose -f deploy/compose.dev.yml up -d db
 export DATABASE_URL='postgres://ghost:ghost@localhost:5432/ghost_five?sslmode=disable'
 export JWT_SECRET=dev-секрет-не-для-боя
-npm run dev        # node --watch src/server.js
+go run ./cmd/api   # Ctrl+C — и снова, после правки
 ```
+
+### Проверки
+
+То же, что гоняет CI:
+
+```bash
+go test ./...
+go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run
+```
+
+Тест `internal/game` читает золотые тесты из соседнего репозитория: положите
+`frontend` рядом с `backend` или укажите путь в `GF_FIXTURES`. Без них тест
+пропускается локально, а в CI фикстуры забираются всегда.
 
 ### Полезное
 
@@ -52,18 +79,21 @@ npm run dev        # node --watch src/server.js
 docker compose -f deploy/compose.dev.yml exec db psql -U ghost -d ghost_five
 
 # миграции: применить, откатить последнюю
-npx dbmate -d ./migrations --no-dump-schema up
-npx dbmate -d ./migrations --no-dump-schema rollback
+docker compose -f deploy/compose.dev.yml run --rm migrate
+docker compose -f deploy/compose.dev.yml run --rm migrate --no-dump-schema rollback
 
 # журнал сервера в контейнере
 docker compose -f deploy/compose.dev.yml logs -f api
 ```
 
-Переменные окружения сервер читает в [src/config.js](src/config.js); обязательна
-только `DATABASE_URL`. Без `SMTP_URL` он поднимется, но письма слать откажется.
+Переменные окружения сервер читает в [internal/config/config.go](internal/config/config.go).
+Пока сервер не ходит в базу, обязательных нет; `DATABASE_URL` станет обязательной
+вместе с первым запросом к ней. Без `SMTP_URL` сервер поднимется, но письма слать
+откажется.
 
-Проверено на чистом клоне: база поднимается, миграции применяются, сервер отвечает
-и в контейнере, и напрямую через `node`.
+Проверено: база поднимается, миграции применяются и откатываются, сервер отвечает
+и в контейнере, и через `go run`; контейнер становится healthy и по `docker stop`
+выходит сам, с кодом 0.
 
 ## Где правила партии
 
@@ -100,15 +130,11 @@ docker compose -f deploy/compose.dev.yml logs -f api
 Формат [dbmate](https://github.com/amacneil/dbmate) — метки `-- migrate:up` и
 `-- migrate:down` понимает и он, и goose, и самописный runner на десять строк.
 
-```
-export DATABASE_URL='postgres://ghost:пароль@localhost:5432/ghost_five?sslmode=disable'
-npm run migrate    # применить
-npm run rollback   # откатить последнюю
-```
-
-Внутри — `dbmate -d ./migrations`: каталог указываем явно, потому что по умолчанию
-dbmate ищет миграции в `db/migrations`. В контейнерах они и смонтированы туда, так
-что там флаг не нужен.
+Применяет их образ `ghcr.io/amacneil/dbmate:2` — один и тот же локально
+(`compose.dev.yml`), в CI и на ВМ (`compose.yml`). Каталог `migrations/` в нём
+смонтирован в `/db/migrations`, где dbmate ищет миграции по умолчанию. Если
+ставите dbmate себе отдельно, каталог надо указать явно:
+`dbmate -d ./migrations --no-dump-schema up`.
 
 Правило: миграции только добавляются. Исправлять уже применённую нельзя — пишется
 следующая. Каждая миграция обязана иметь рабочий `down`, иначе откат релиза
@@ -116,13 +142,14 @@ dbmate ищет миграции в `db/migrations`. В контейнерах �
 
 ## Дальше по порядку
 
-1. Каркас сервера: `transport` (HTTP + WebSocket) → `service` → `store`, конфиг из
-   переменных окружения, `/healthz`.
-2. Аккаунты: регистрация с кодом, вход, refresh, сброс пароля, письма через SMTP.
-3. Лобби: друзья, приглашения, создание партии.
-4. Партия: применение хода движком, тайна чужого хода, серверные часы, рассылка
+1. ~~Каркас сервера на Go: конфиг из переменных окружения, `/healthz`, образ, CI.~~
+2. Движок на Go: порт `engine.js`, проходит золотые тесты. Идёт раньше аккаунтов —
+   это самая непредсказуемая часть, и от базы она не зависит.
+3. Аккаунты: регистрация с кодом, вход, refresh, сброс пароля, письма через SMTP.
+4. Лобби: друзья, приглашения, создание партии.
+5. Партия: применение хода движком, тайна чужого хода, серверные часы, рассылка
    по WebSocket.
-5. История и рейтинг Эло по окончании партии.
+6. История и рейтинг Эло по окончании партии.
 
 Контракт на всё это уже описан: [openapi.yaml](docs/api/openapi.yaml) и
 [ws.md](docs/api/ws.md). Общий план переезда —

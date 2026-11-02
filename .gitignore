@@ -1,4 +1,12 @@
-node_modules/
+# Собранный бинарник и отчёты тестов
+/api
+/api.exe
+/bin/
+*.out
+
+# Фикстуры, которые CI забирает из frontend
+/_frontend/
+
 .env
 .env.*
 !.env.example

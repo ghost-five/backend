@@ -1,0 +1,23 @@
+# Линтер: стандартный набор и то, что ловит частые ошибки сервера —
+# незакрытые тела ответов, запросы без контекста, сравнение ошибок через ==.
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gosec
+    - noctx
+    - unconvert
+    - usestdlibvars
+  exclusions:
+    rules:
+      # Тесты читают фикстуры по путям из переменных — это и есть их работа.
+      - path: _test\.go
+        linters: [gosec]
+
+formatters:
+  enable:
+    - gofmt
+    - goimports

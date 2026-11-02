@@ -1,0 +1,10 @@
+# В образ нужен только Go-код: остальное лишь сбивает кеш сборки.
+.git
+.github
+deploy
+docs
+migrations
+_frontend
+*.md
+.env
+.env.*
